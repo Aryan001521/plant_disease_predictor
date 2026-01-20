@@ -1,0 +1,7 @@
+models/
+*.pth
+__pycache__/
+*.pyc
+myenv/
+venv/
+.streamlit/
