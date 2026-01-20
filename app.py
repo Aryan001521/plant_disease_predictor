@@ -1,5 +1,4 @@
 import os
-import requests
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -7,14 +6,18 @@ from torchvision import models, transforms
 from PIL import Image
 import pandas as pd
 
+from huggingface_hub import hf_hub_download
+
+
 # =========================================================
 # 1) Page config
 # =========================================================
 st.set_page_config(page_title="Plant Disease Predictor", page_icon="🌿", layout="centered")
 DEVICE = torch.device("cpu")
 
+
 # =========================================================
-# 2) Theme + UI fixes (dark + readable widgets)
+# 2) Dark UI + widget visibility fixes
 # =========================================================
 st.markdown("""
 <style>
@@ -106,57 +109,46 @@ section[data-testid="stFileUploaderDropzone"] button{
 </style>
 """, unsafe_allow_html=True)
 
+
 # =========================================================
-# 3) Hugging Face private repo download (HF_TOKEN required)
+# 3) Hugging Face PRIVATE model download (most reliable)
 # =========================================================
 HF_REPO = "ijghb/plant-disease-resnet18"
 
-MODEL_URLS = {
-    "Best (Color model)": f"https://hf.co/{HF_REPO}/resolve/main/color_optuna_resnet18.pth?download=true",
-    "Grayscale model": f"https://hf.co/{HF_REPO}/resolve/main/grayscale_optuna_resnet18.pth?download=true",
+MODEL_FILES = {
+    "Best (Color model)": "color_optuna_resnet18.pth",
+    "Grayscale model": "grayscale_optuna_resnet18.pth",
+    # If you later upload segmented:
+    # "Segmented model": "segmented_optuna_resnet18.pth",
 }
 
-MODEL_DIR = "models"
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-def ensure_model(url: str) -> str:
-    """
-    Download model from PRIVATE Hugging Face repo using token stored in Streamlit Secrets:
-    Secrets:
-      HF_TOKEN = "..."
-    """
-    filename = os.path.basename(url.split("?")[0])
-    local_path = os.path.join(MODEL_DIR, filename)
-
-    if os.path.exists(local_path):
-        return local_path
-
-    # Token (required if repo is PRIVATE)
+def get_hf_token() -> str:
     token = st.secrets.get("HF_TOKEN", None)
     if not token:
-        st.error("HF_TOKEN not found. Add it in Streamlit Cloud -> Settings -> Secrets.")
+        st.error("HF_TOKEN is missing. Add it in Streamlit Cloud → Settings → Secrets.")
+        st.stop()
+    return token
+
+@st.cache_resource
+def download_model_from_hf(filename: str) -> str:
+    """
+    Downloads from PRIVATE HF repo using hf_hub_download.
+    Cached by Streamlit so it won't re-download every run.
+    """
+    token = get_hf_token()
+    try:
+        path = hf_hub_download(
+            repo_id=HF_REPO,
+            filename=filename,
+            token=token,     # required for private repos
+            revision="main"
+        )
+        return path
+    except Exception as e:
+        st.error("Model download failed ❌ (private repo access issue)")
+        st.code(f"Repo: {HF_REPO}\nFile: {filename}\nError: {repr(e)}")
         st.stop()
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "Mozilla/5.0"
-    }
-
-    with st.spinner("Downloading model (private repo, first time only)..."):
-        r = requests.get(url, stream=True, timeout=240, headers=headers, allow_redirects=True)
-
-        if r.status_code != 200:
-            st.error(f"Model download failed ❌ | HTTP {r.status_code}")
-            st.code(f"URL: {url}")
-            st.code("Fix: Check token (Read permission), repo name, branch, and filename.")
-            st.stop()
-
-        with open(local_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
-
-    return local_path
 
 # =========================================================
 # 4) Model build/load
@@ -170,12 +162,13 @@ def build_model(num_classes: int):
 def load_checkpoint(local_path: str):
     ckpt = torch.load(local_path, map_location=DEVICE)
     if "classes" not in ckpt or "state_dict" not in ckpt:
-        raise ValueError("Invalid checkpoint. Required keys: classes, state_dict")
+        raise ValueError("Invalid checkpoint format. Expected keys: 'classes', 'state_dict'.")
     classes = ckpt["classes"]
     model = build_model(len(classes))
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     return model, classes
+
 
 # =========================================================
 # 5) Preprocessing
@@ -213,8 +206,9 @@ def topk(probs: torch.Tensor, classes, k=5):
     vals, idxs = torch.topk(probs, k)
     return [(classes[int(i)], float(v)) for v, i in zip(vals, idxs)]
 
+
 # =========================================================
-# 6) Care tips (simple guidance)
+# 6) Simple care tips (guidance only)
 # =========================================================
 def care_tips(label: str):
     s = label.lower()
@@ -268,6 +262,7 @@ def care_tips(label: str):
         "For exact treatment, consult local agriculture experts."
     ]
 
+
 # =========================================================
 # 7) UI
 # =========================================================
@@ -275,7 +270,7 @@ st.title("🌿 Plant Disease Predictor")
 st.markdown('<div class="muted">Upload a leaf image to get a simple diagnosis and guidance.</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="card">', unsafe_allow_html=True)
-model_choice = st.selectbox("Choose a model", list(MODEL_URLS.keys()), index=0)
+model_choice = st.selectbox("Choose a model", list(MODEL_FILES.keys()), index=0)
 uploaded = st.file_uploader("Upload leaf image (JPG/PNG)", type=["jpg", "jpeg", "png"])
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -293,12 +288,11 @@ with st.expander("Optional: Show more details"):
     top_k = st.slider("How many alternative predictions to show:", 1, 5, 3)
 
 if st.button("Predict"):
-    url = MODEL_URLS[model_choice]
+    filename = MODEL_FILES[model_choice]
 
-    # Download only when needed (private repo requires token)
-    local_model_path = ensure_model(url)
-
-    model, classes = load_checkpoint(local_model_path)
+    with st.spinner("Loading model..."):
+        local_model_path = download_model_from_hf(filename)
+        model, classes = load_checkpoint(local_model_path)
 
     x = get_transform(model_choice)(img).unsqueeze(0)
     with torch.no_grad():
@@ -314,7 +308,10 @@ if st.button("Predict"):
     st.markdown(confidence_badge(level), unsafe_allow_html=True)
     st.write(f"**Prediction:** {pretty_label(top_label)}")
     st.write(f"**Confidence:** {top_prob*100:.2f}%")
-    st.markdown('<div class="muted">Note: Guidance only. For exact pesticide/dosage, follow local agriculture recommendations.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="muted">Note: This tool gives guidance only. For exact pesticide/dosage, follow local agriculture recommendations.</div>',
+        unsafe_allow_html=True
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
