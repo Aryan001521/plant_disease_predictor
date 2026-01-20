@@ -1,4 +1,5 @@
 import os
+import requests
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -13,7 +14,7 @@ st.set_page_config(page_title="Plant Disease Predictor", layout="centered")
 DEVICE = torch.device("cpu")
 
 # =========================================================
-# 2) CSS (Background + Fix black widgets + Fix button text)
+# 2) CSS (Background + Fix black widgets + Fix button)
 # =========================================================
 st.markdown("""
 <style>
@@ -52,7 +53,7 @@ main .block-container{
   font-size: 0.92rem !important;
 }
 
-/* ---------- PREDICT BUTTON (FIX INVISIBLE TEXT) ---------- */
+/* ---------- BUTTON (FIX INVISIBLE TEXT) ---------- */
 .stButton > button{
   background-color: #111827 !important;
   color: #ffffff !important;
@@ -62,35 +63,25 @@ main .block-container{
   font-size: 16px !important;
   font-weight: 700 !important;
 }
-.stButton > button *{
-  color: #ffffff !important;
-}
+.stButton > button *{ color: #ffffff !important; }
 .stButton > button:hover{
   background-color: #1f2937 !important;
   border-color: #1f2937 !important;
 }
 
-/* =========================================================
-   FIX: SELECTBOX (was showing black)
-   ========================================================= */
+/* ---------- SELECTBOX FIX ---------- */
 div[data-testid="stSelectbox"] div[data-baseweb="select"]{
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
   border-radius: 12px !important;
 }
-div[data-baseweb="select"] > div{
-  background: #ffffff !important;
-}
-div[data-baseweb="select"] *{
-  color: #111827 !important;
-}
+div[data-baseweb="select"] > div{ background: #ffffff !important; }
+div[data-baseweb="select"] *{ color: #111827 !important; }
 div[data-baseweb="select"] input{
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
 }
-div[data-baseweb="select"] svg{
-  fill: #111827 !important;
-}
+div[data-baseweb="select"] svg{ fill: #111827 !important; }
 
 /* Dropdown list */
 ul[role="listbox"]{
@@ -102,22 +93,17 @@ li[role="option"]{
   background: #ffffff !important;
   color: #111827 !important;
 }
-li[role="option"]:hover{
-  background: #f3f4f6 !important;
-}
+li[role="option"]:hover{ background: #f3f4f6 !important; }
 
-/* =========================================================
-   FIX: FILE UPLOADER
-   ========================================================= */
+/* ---------- FILE UPLOADER FIX ---------- */
 div[data-testid="stFileUploader"]{
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
   border-radius: 12px !important;
   padding: 10px !important;
 }
-div[data-testid="stFileUploader"] *{
-  color: #111827 !important;
-}
+div[data-testid="stFileUploader"] *{ color: #111827 !important; }
+
 section[data-testid="stFileUploaderDropzone"]{
   background: #ffffff !important;
   border: 1px dashed #c7d2fe !important;
@@ -133,16 +119,36 @@ section[data-testid="stFileUploaderDropzone"] button{
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 3) Model paths (put .pth inside ./models/)
+# 3) HuggingFace model auto-download
 # =========================================================
-MODEL_PATHS = {
-    "Best (Color model)": "models/color_optuna_resnet18.pth",
-    "Grayscale model": "models/grayscale_optuna_resnet18.pth",
-    "Segmented model": "models/segmented_optuna_resnet18.pth",
+MODEL_URLS = {
+    "color": "https://huggingface.co/jighb/plant-disease-resnet18/resolve/main/color_optuna_resnet18.pth",
+    "grayscale": "https://huggingface.co/jighb/plant-disease-resnet18/resolve/main/grayscale_optuna_resnet18.pth",
 }
 
-def get_available_models():
-    return {k: v for k, v in MODEL_PATHS.items() if os.path.exists(v)}
+os.makedirs("models", exist_ok=True)
+
+def ensure_model(name: str) -> str:
+    """Download model file once (if missing) and return local path."""
+    local_path = f"models/{name}_optuna_resnet18.pth"
+    if os.path.exists(local_path):
+        return local_path
+
+    url = MODEL_URLS[name]
+    with st.spinner(f"Downloading {name} model (first time only)..."):
+        r = requests.get(url, stream=True, timeout=120)
+        r.raise_for_status()
+        with open(local_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+    return local_path
+
+# Model choices shown to user
+MODEL_PATHS = {
+    "Best (Color model)": ensure_model("color"),
+    "Grayscale model": ensure_model("grayscale"),
+}
 
 # =========================================================
 # 4) Preprocessing
@@ -169,6 +175,10 @@ def build_model(num_classes: int):
 @st.cache_resource
 def load_checkpoint(path: str):
     ckpt = torch.load(path, map_location=DEVICE)
+
+    if "classes" not in ckpt or "state_dict" not in ckpt:
+        raise ValueError("Checkpoint format invalid. Expect keys: 'classes', 'state_dict'.")
+
     classes = ckpt["classes"]
     state_dict = ckpt["state_dict"]
 
@@ -194,40 +204,48 @@ def topk_from_probs(probs, classes, k=5):
 def pretty_label(label: str) -> str:
     return label.replace("___", " / ").replace("_", " ")
 
+def confidence_badge(p: float) -> str:
+    # simple user-friendly confidence label
+    if p >= 0.85:
+        return "High"
+    if p >= 0.60:
+        return "Medium"
+    return "Low"
+
 # =========================================================
-# 7) Cure tips (simple & believable)
+# 7) Care Tips (simple, non-technical)
 # =========================================================
 def cure_tips(label: str):
     low = label.lower()
 
     if "healthy" in low:
         return [
-            "No treatment needed.",
-            "Keep regular watering and balanced fertilizer.",
-            "Remove old leaves and keep the area clean."
+            "Looks healthy. No treatment needed.",
+            "Keep normal watering and balanced fertilizer.",
+            "Remove old/dry leaves and keep the area clean."
         ]
 
     if "late_blight" in low or "late blight" in low:
         return [
             "Remove infected leaves quickly (do not compost).",
-            "Avoid watering on leaves; water near soil.",
-            "Improve airflow (spacing/pruning).",
-            "Follow local agriculture guidance for fungicide use."
+            "Water near soil, avoid wet leaves.",
+            "Give more spacing for airflow.",
+            "Follow local agriculture guidance for safe treatment."
         ]
 
     if "early_blight" in low or "early blight" in low:
         return [
             "Remove infected leaves and fallen debris.",
-            "Water at soil level; keep leaves dry.",
+            "Keep leaves dry (avoid overhead watering).",
             "Rotate crops to reduce recurrence.",
-            "Consult local agriculture guidance if it spreads."
+            "Consult local guidance if it spreads."
         ]
 
     if "powdery_mildew" in low or "powdery mildew" in low:
         return [
             "Remove heavily infected leaves.",
-            "Avoid too much nitrogen fertilizer.",
             "Improve ventilation and spacing.",
+            "Avoid excess nitrogen fertilizer.",
             "Use recommended treatment as per local guidance."
         ]
 
@@ -241,35 +259,29 @@ def cure_tips(label: str):
 
     if "mosaic" in low or "virus" in low:
         return [
-            "Isolate/remove infected plants to prevent spread.",
+            "Remove/isolate infected plants to prevent spread.",
             "Disinfect tools after use.",
             "Control insects (aphids/whiteflies) safely.",
             "Use healthy seedlings/resistant varieties if available."
         ]
 
     return [
-        "Take a clearer photo (close-up, good light, plain background).",
+        "Try a clearer photo (close-up, good light, plain background).",
         "Remove infected leaves and keep the area clean.",
         "Avoid overhead watering; keep leaves dry.",
         "For exact treatment, consult local agriculture experts."
     ]
 
 # =========================================================
-# 8) UI (User-friendly)
+# 8) UI (Simple + Professional)
 # =========================================================
 st.title("🌿 Plant Disease Predictor")
 st.write("Upload a leaf image to get a diagnosis with simple care tips.")
 
-available = get_available_models()
-if not available:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.error("No model files found in the `models/` folder. Please add your trained `.pth` files.")
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.stop()
-
-model_choice = st.selectbox("Choose a model", list(available.keys()), index=0)
+model_choice = st.selectbox("Choose a model", list(MODEL_PATHS.keys()), index=0)
 
 uploaded = st.file_uploader("Upload leaf image (JPG/PNG)", type=["jpg", "jpeg", "png"])
+
 if not uploaded:
     st.markdown('<div class="card"><span class="small">⬆️ Upload an image to start.</span></div>', unsafe_allow_html=True)
     st.stop()
@@ -278,38 +290,51 @@ image = Image.open(uploaded).convert("RGB")
 st.image(image, width=520)
 
 if st.button("Predict"):
-    model, classes = load_checkpoint(available[model_choice])
-    probs = predict_probs(image, model, model_choice)
-    preds = topk_from_probs(probs, classes, k=5)
+    try:
+        model_path = MODEL_PATHS[model_choice]
+        model, classes = load_checkpoint(model_path)
 
-    top_label, top_prob = preds[0]
-    nice_label = pretty_label(top_label)
+        probs = predict_probs(image, model, model_choice)
+        preds = topk_from_probs(probs, classes, k=5)
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("✅ Result")
-    st.write(f"**Prediction:** {nice_label}")
-    st.write(f"**Confidence:** {top_prob*100:.2f}%")
-    st.markdown('<div class="small">Note: For exact pesticide/dosage, follow local agriculture recommendations.</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        top_label, top_prob = preds[0]
+        nice_label = pretty_label(top_label)
+        conf_text = confidence_badge(top_prob)
 
-    tips = cure_tips(top_label)
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🌱 What you can do")
-    for t in tips:
-        st.write(f"- {t}")
-    st.markdown('</div>', unsafe_allow_html=True)
+        # Result card
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("✅ Result")
+        st.write(f"**Prediction:** {nice_label}")
+        st.write(f"**Confidence:** {top_prob*100:.2f}%  ({conf_text})")
+        st.markdown('<div class="small">Note: This is a guidance tool. For exact pesticide/dosage, follow local agriculture recommendations.</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    df = pd.DataFrame({
-        "Class": [pretty_label(x[0]) for x in preds],
-        "Probability": [x[1] for x in preds]
-    }).set_index("Class")
+        # Tips card
+        tips = cure_tips(top_label)
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("🌱 What you can do")
+        for t in tips:
+            st.write(f"- {t}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    st.subheader("📊 Confidence Chart")
-    st.bar_chart(df)
+        # Chart
+        df = pd.DataFrame({
+            "Class": [pretty_label(x[0]) for x in preds],
+            "Probability": [x[1] for x in preds]
+        }).set_index("Class")
 
-    with st.expander("Show Top Predictions"):
-        for label, p in preds:
-            st.write(f"**{pretty_label(label)}** — {p*100:.2f}%")
-            st.progress(int(p * 100))
+        st.subheader("📊 Confidence Chart")
+        st.bar_chart(df)
+
+        # Optional: show details
+        with st.expander("Show Top Predictions"):
+            for label, p in preds:
+                st.write(f"**{pretty_label(label)}** — {p*100:.2f}%")
+                st.progress(int(p * 100))
+
+    except Exception as e:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.error(f"Something went wrong: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.markdown('<div class="card"><span class="small">Click <b>Predict</b> to see the result.</span></div>', unsafe_allow_html=True)
