@@ -14,7 +14,7 @@ st.set_page_config(page_title="Plant Disease Predictor", page_icon="🌿", layou
 DEVICE = torch.device("cpu")
 
 # =========================================================
-# 2) Dark UI + fix widgets/button visibility
+# 2) Theme + UI fixes (dark + readable widgets)
 # =========================================================
 st.markdown("""
 <style>
@@ -82,15 +82,35 @@ section[data-testid="stFileUploaderDropzone"] button{
   color: #ffffff !important;
   border-radius: 10px !important;
 }
+
+.badge{
+  display:inline-block;
+  padding:6px 10px;
+  border-radius:999px;
+  background: rgba(34,197,94,0.15);
+  border: 1px solid rgba(34,197,94,0.35);
+  color:#bbf7d0 !important;
+  font-weight:600;
+  font-size: 0.85rem;
+}
+.badge-low{
+  background: rgba(239,68,68,0.12);
+  border: 1px solid rgba(239,68,68,0.30);
+  color:#fecaca !important;
+}
+.badge-mid{
+  background: rgba(245,158,11,0.12);
+  border: 1px solid rgba(245,158,11,0.30);
+  color:#fde68a !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 3) HuggingFace auto-download (robust)
+# 3) Hugging Face private repo download (HF_TOKEN required)
 # =========================================================
 HF_REPO = "ijghb/plant-disease-resnet18"
 
-# Use hf.co domain (often more reliable on Streamlit Cloud)
 MODEL_URLS = {
     "Best (Color model)": f"https://hf.co/{HF_REPO}/resolve/main/color_optuna_resnet18.pth?download=true",
     "Grayscale model": f"https://hf.co/{HF_REPO}/resolve/main/grayscale_optuna_resnet18.pth?download=true",
@@ -101,9 +121,9 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 def ensure_model(url: str) -> str:
     """
-    Downloads model file if missing and returns local path.
-    Prints detailed error info (status code + URL) when it fails.
-    Supports optional HF_TOKEN in Streamlit secrets.
+    Download model from PRIVATE Hugging Face repo using token stored in Streamlit Secrets:
+    Secrets:
+      HF_TOKEN = "..."
     """
     filename = os.path.basename(url.split("?")[0])
     local_path = os.path.join(MODEL_DIR, filename)
@@ -111,27 +131,24 @@ def ensure_model(url: str) -> str:
     if os.path.exists(local_path):
         return local_path
 
-    headers = {"User-Agent": "Mozilla/5.0"}
+    # Token (required if repo is PRIVATE)
+    token = st.secrets.get("HF_TOKEN", None)
+    if not token:
+        st.error("HF_TOKEN not found. Add it in Streamlit Cloud -> Settings -> Secrets.")
+        st.stop()
 
-    # Optional: if repo is PRIVATE, add token in Streamlit Secrets:
-    # HF_TOKEN = "..."
-    token = None
-    try:
-        token = st.secrets.get("HF_TOKEN", None)
-    except Exception:
-        token = None
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Mozilla/5.0"
+    }
 
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    with st.spinner("Downloading model (first time only)..."):
+    with st.spinner("Downloading model (private repo, first time only)..."):
         r = requests.get(url, stream=True, timeout=240, headers=headers, allow_redirects=True)
 
         if r.status_code != 200:
-            # Show exact reason
-            st.error(f"Download failed ❌  |  HTTP {r.status_code}")
+            st.error(f"Model download failed ❌ | HTTP {r.status_code}")
             st.code(f"URL: {url}")
-            st.code(f"Hint: 401/403 = private/gated repo or token missing | 404 = wrong path/branch/filename")
+            st.code("Fix: Check token (Read permission), repo name, branch, and filename.")
             st.stop()
 
         with open(local_path, "wb") as f:
@@ -153,7 +170,7 @@ def build_model(num_classes: int):
 def load_checkpoint(local_path: str):
     ckpt = torch.load(local_path, map_location=DEVICE)
     if "classes" not in ckpt or "state_dict" not in ckpt:
-        raise ValueError("Checkpoint format invalid. Expected keys: 'classes', 'state_dict'.")
+        raise ValueError("Invalid checkpoint. Required keys: classes, state_dict")
     classes = ckpt["classes"]
     model = build_model(len(classes))
     model.load_state_dict(ckpt["state_dict"])
@@ -177,44 +194,59 @@ def get_transform(model_choice: str):
 def pretty_label(label: str) -> str:
     return label.replace("___", " / ").replace("_", " ")
 
+def confidence_level(p: float) -> str:
+    if p >= 0.85:
+        return "High"
+    if p >= 0.60:
+        return "Medium"
+    return "Low"
+
+def confidence_badge(level: str) -> str:
+    if level == "High":
+        return '<span class="badge">High confidence</span>'
+    if level == "Medium":
+        return '<span class="badge badge-mid">Medium confidence</span>'
+    return '<span class="badge badge-low">Low confidence</span>'
+
 def topk(probs: torch.Tensor, classes, k=5):
     k = min(k, len(classes))
     vals, idxs = torch.topk(probs, k)
     return [(classes[int(i)], float(v)) for v, i in zip(vals, idxs)]
 
 # =========================================================
-# 6) Simple care tips
+# 6) Care tips (simple guidance)
 # =========================================================
 def care_tips(label: str):
     s = label.lower()
+
     if "healthy" in s:
         return [
             "Leaf looks healthy. No treatment needed.",
             "Keep normal watering and balanced nutrition.",
             "Remove old/dry leaves and keep the area clean."
         ]
-    if "powdery_mildew" in s or "powdery mildew" in s:
+    if "powdery" in s:
         return [
             "Remove heavily infected leaves.",
-            "Increase airflow (spacing) and avoid overwatering.",
+            "Increase airflow and avoid overwatering.",
             "Avoid excess nitrogen fertilizer.",
-            "If it spreads, follow local agriculture guidance."
+            "If it spreads, consult local agriculture guidance."
         ]
     if "rust" in s:
         return [
             "Remove infected leaves and nearby weeds.",
             "Avoid splashing water on leaves.",
             "Improve sunlight and airflow.",
-            "Follow local guidance if it increases."
+            "Consult local experts if it increases."
         ]
-    if "late_blight" in s or "late blight" in s:
+    if "late blight" in s or "late_blight" in s:
         return [
             "Remove infected leaves quickly (do not compost).",
             "Water near soil; keep leaves dry.",
             "Increase spacing for airflow.",
             "Consult local experts for safe treatment."
         ]
-    if "early_blight" in s or "early blight" in s:
+    if "early blight" in s or "early_blight" in s:
         return [
             "Remove infected leaves and fallen debris.",
             "Avoid overhead watering; keep leaves dry.",
@@ -228,6 +260,7 @@ def care_tips(label: str):
             "Control insects safely (aphids/whiteflies).",
             "Use healthy seedlings/resistant varieties if available."
         ]
+
     return [
         "Try a clearer image (close-up, good light, plain background).",
         "Remove infected leaves and keep the area clean.",
@@ -262,7 +295,7 @@ with st.expander("Optional: Show more details"):
 if st.button("Predict"):
     url = MODEL_URLS[model_choice]
 
-    # Download only when user clicks Predict
+    # Download only when needed (private repo requires token)
     local_model_path = ensure_model(url)
 
     model, classes = load_checkpoint(local_model_path)
@@ -274,11 +307,14 @@ if st.button("Predict"):
     preds = topk(probs, classes, k=5)
     top_label, top_prob = preds[0]
 
+    level = confidence_level(top_prob)
+
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("✅ Result")
+    st.markdown(confidence_badge(level), unsafe_allow_html=True)
     st.write(f"**Prediction:** {pretty_label(top_label)}")
     st.write(f"**Confidence:** {top_prob*100:.2f}%")
-    st.markdown('<div class="muted">Note: This tool provides guidance only. For exact pesticide/dosage, follow local agriculture recommendations.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="muted">Note: Guidance only. For exact pesticide/dosage, follow local agriculture recommendations.</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
