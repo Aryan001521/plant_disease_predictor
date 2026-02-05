@@ -1,4 +1,3 @@
-# plant_diease_predictor
 
 # 🌿 Plant Disease Predictor
 A deep learning–powered web application that identifies plant leaf diseases from images using a fine-tuned ResNet18 model. The app provides clear predictions, confidence scores, and simple care suggestions for farmers, gardeners, and agriculture enthusiasts.
@@ -37,7 +36,5 @@ This app uses:
 
 Models are stored privately on Hugging Face and loaded at runtime using secure tokens.
 
----
 
-## 🗂️ Project Structure
 
