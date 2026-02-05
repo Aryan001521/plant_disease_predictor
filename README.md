@@ -1,9 +1,6 @@
 # plant_diease_predictor
 
 # 🌿 Plant Disease Predictor
-
-Live demo: https://plantdiseasepredictor-ydgzkipytezhgbz29txbln.streamlit.app/
-
 A deep learning–powered web application that identifies plant leaf diseases from images using a fine-tuned ResNet18 model. The app provides clear predictions, confidence scores, and simple care suggestions for farmers, gardeners, and agriculture enthusiasts.
 
 ---
