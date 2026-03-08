@@ -560,5 +560,5 @@ else:
         '<div class="card"><span class="small">Click <b>Predict</b> to see the result.</span></div>',
         unsafe_allow_html=True,
       st.write("HF token found:", "HF_TOKEN" in st.secrets),
-      st.write("Repo ID:", HF_REPO_ID)
+      st.write("Repo ID:", HF_REPO_ID),
     )
