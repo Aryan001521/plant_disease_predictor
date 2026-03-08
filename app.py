@@ -120,7 +120,7 @@ section[data-testid="stFileUploaderDropzone"] button{
 # =========================================================
 # 3) Hugging Face Config
 # =========================================================
-HF_REPO_ID = "jjghb/plant-disease-resnet18"
+HF_REPO_ID = "ijghb/plant-disease-resnet18"
 
 MODEL_FILES = {
     "Best (Color model)": "color_optuna_resnet18.pth",
