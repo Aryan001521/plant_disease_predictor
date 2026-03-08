@@ -385,8 +385,7 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         cam_np = np.array(cam_img).astype(np.float32) / 255.0
 
         # Threshold low-importance noise
-        cam_np = np.where(cam_np > 0.15, cam_np, 0.0)
-
+        
         orig_np = np.array(orig).astype(np.float32)
 
         # Better red heatmap
