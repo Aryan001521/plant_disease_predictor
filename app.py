@@ -330,7 +330,7 @@ def cure_tips(label: str):
     ]
 
 # =========================================================
-# 9) Grad-CAM
+# 9) Better Grad-CAM
 # =========================================================
 def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None):
     model.eval()
@@ -340,10 +340,10 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
     gradients = []
 
     def forward_hook(module, inp, out):
-        activations.append(out.detach())
+        activations.append(out)
 
     def backward_hook(module, grad_input, grad_output):
-        gradients.append(grad_output[0].detach())
+        gradients.append(grad_output[0])
 
     fh = target_layer.register_forward_hook(forward_hook)
     bh = target_layer.register_full_backward_hook(backward_hook)
@@ -361,31 +361,44 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         model.zero_grad()
         score.backward()
 
-        acts = activations[0]
-        grads = gradients[0]
+        acts = activations[0]              # [1, C, H, W]
+        grads = gradients[0]               # [1, C, H, W]
 
         weights = grads.mean(dim=(2, 3), keepdim=True)
         cam = (weights * acts).sum(dim=1, keepdim=True)
         cam = torch.relu(cam)
-        cam = cam.squeeze().cpu().numpy()
 
+        cam = cam.squeeze().detach().cpu().numpy()
+
+        # Better normalization
+        cam = cam - cam.min()
         if cam.max() > 0:
             cam = cam / cam.max()
 
-        cam = Image.fromarray(np.uint8(cam * 255)).resize((224, 224))
-        cam_np = np.array(cam).astype(np.float32) / 255.0
+        # Original image size
+        orig = image.convert("RGB")
+        orig_w, orig_h = orig.size
 
-        orig = image.resize((224, 224)).convert("RGB")
+        # Resize CAM to original image size
+        cam_img = Image.fromarray(np.uint8(cam * 255))
+        cam_img = cam_img.resize((orig_w, orig_h), resample=Image.Resampling.BILINEAR)
+        cam_np = np.array(cam_img).astype(np.float32) / 255.0
+
+        # Threshold low-importance noise
+        cam_np = np.where(cam_np > 0.25, cam_np, 0.0)
+
         orig_np = np.array(orig).astype(np.float32)
 
-        heatmap = np.zeros((224, 224, 3), dtype=np.float32)
-        heatmap[..., 0] = cam_np * 255.0
+        # Better red heatmap
+        heatmap_rgb = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
+        heatmap_rgb[..., 0] = np.uint8(cam_np * 255)
 
-        overlay = 0.6 * orig_np + 0.4 * heatmap
-        overlay = np.clip(overlay, 0, 255).astype(np.uint8)
-
-        heatmap_rgb = np.zeros((224, 224, 3), dtype=np.uint8)
-        heatmap_rgb[..., 0] = (cam_np * 255).astype(np.uint8)
+        # Cleaner overlay
+        overlay = orig_np.copy()
+        overlay[..., 0] = np.clip(overlay[..., 0] + cam_np * 160, 0, 255)
+        overlay[..., 1] = np.clip(overlay[..., 1] - cam_np * 50, 0, 255)
+        overlay[..., 2] = np.clip(overlay[..., 2] - cam_np * 50, 0, 255)
+        overlay = overlay.astype(np.uint8)
 
         return Image.fromarray(heatmap_rgb), Image.fromarray(overlay)
 
