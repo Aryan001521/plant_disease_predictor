@@ -128,10 +128,15 @@ MODEL_FILES = {
 }
 
 @st.cache_resource(show_spinner=False)
+HF_REPO_ID = "jjghb/plant-disease-resnet18"
+
+MODEL_FILES = {
+    "Best (Color model)": "color_optuna_resnet18.pth",
+    "Grayscale model": "grayscale_optuna_resnet18.pth",
+}
+
+@st.cache_resource(show_spinner=False)
 def get_available_models():
-    st.write("HF token found:", "HF_TOKEN" in st.secrets)
-    st.write("HF_REPO_ID:", HF_REPO_ID)
-    st.write("Token preview:", st.secrets["HF_TOKEN"][:10] + "...")
     available = {}
     errors = {}
 
@@ -142,8 +147,7 @@ def get_available_models():
             local_path = hf_hub_download(
                 repo_id=HF_REPO_ID,
                 filename=hf_filename,
-                repo_type="model",
-                token=hf_token,
+                token=hf_token
             )
             available[model_name] = local_path
         except Exception as e:
