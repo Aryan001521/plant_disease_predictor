@@ -128,14 +128,6 @@ MODEL_FILES = {
 }
 
 @st.cache_resource(show_spinner=False)
-HF_REPO_ID = "jjghb/plant-disease-resnet18"
-
-MODEL_FILES = {
-    "Best (Color model)": "color_optuna_resnet18.pth",
-    "Grayscale model": "grayscale_optuna_resnet18.pth",
-}
-
-@st.cache_resource(show_spinner=False)
 def get_available_models():
     available = {}
     errors = {}
