@@ -129,6 +129,8 @@ MODEL_FILES = {
 
 @st.cache_resource(show_spinner=False)
 def get_available_models():
+    st.write("HF token found:", "HF_TOKEN" in st.secrets)
+    st.write("HF_REPO_ID:", HF_REPO_ID)
     available = {}
     errors = {}
 
