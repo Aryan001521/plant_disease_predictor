@@ -1,8 +1,8 @@
 streamlit
 torch
 torchvision
-pandas
-numpy
 pillow
-huggingface_hub>=1.0.0
+numpy
+pandas
+huggingface_hub
 hf_xet
