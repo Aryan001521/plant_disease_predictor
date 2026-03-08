@@ -334,7 +334,7 @@ def cure_tips(label: str):
 # =========================================================
 def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None):
     model.eval()
-    target_layer = model.layer4[-1]
+    target_layer = model.layer3[-1]
 
     activations = []
     gradients = []
