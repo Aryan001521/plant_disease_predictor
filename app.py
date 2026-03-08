@@ -131,6 +131,7 @@ MODEL_FILES = {
 def get_available_models():
     st.write("HF token found:", "HF_TOKEN" in st.secrets)
     st.write("HF_REPO_ID:", HF_REPO_ID)
+    st.write("Token preview:", st.secrets["HF_TOKEN"][:10] + "..."))
     available = {}
     errors = {}
 
