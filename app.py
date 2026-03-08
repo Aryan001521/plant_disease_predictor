@@ -7,21 +7,20 @@ import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
 from huggingface_hub import hf_hub_download
-from huggingface_hub.utils import logging as hf_logging
 
+# =========================================================
+# 1) App Config
+# =========================================================
 st.set_page_config(page_title="Plant Disease Predictor", layout="centered")
 DEVICE = torch.device("cpu")
 CONFIDENCE_LOW = 0.60
 CONFIDENCE_MEDIUM = 0.80
 
-# Hugging Face download logs on
-hf_logging.set_verbosity_info()
-
-# Optional: on some Windows setups this avoids cache warning noise
+# Avoid HF cache symlink warning noise on some environments
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # =========================================================
-# CSS
+# 2) CSS
 # =========================================================
 st.markdown("""
 <style>
@@ -120,7 +119,7 @@ section[data-testid="stFileUploaderDropzone"] button{
 """, unsafe_allow_html=True)
 
 # =========================================================
-# Hugging Face config
+# 3) Hugging Face Model Config
 # =========================================================
 HF_REPO_ID = "jjghb/plant-disease-resnet18"
 
@@ -139,7 +138,7 @@ def get_available_models():
             local_path = hf_hub_download(
                 repo_id=HF_REPO_ID,
                 filename=hf_filename,
-                repo_type="model",
+                repo_type="model"
             )
             available[model_name] = local_path
         except Exception as e:
@@ -148,7 +147,7 @@ def get_available_models():
     return available, errors
 
 # =========================================================
-# Preprocessing
+# 4) Preprocessing
 # =========================================================
 def get_transform(model_name: str):
     steps = [transforms.Resize((224, 224))]
@@ -167,14 +166,14 @@ def preprocess_image(image: Image.Image, model_name: str):
     return get_transform(model_name)(image).unsqueeze(0).to(DEVICE)
 
 # =========================================================
-# Model load
+# 5) Build / Load Model
 # =========================================================
 def build_model(num_classes: int):
     model = models.resnet18(weights=None)
     model.fc = nn.Linear(model.fc.in_features, num_classes)
     return model
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_checkpoint(path: str):
     checkpoint = torch.load(path, map_location=DEVICE)
     classes = checkpoint["classes"]
@@ -187,7 +186,7 @@ def load_checkpoint(path: str):
     return model, classes
 
 # =========================================================
-# Prediction helpers
+# 6) Prediction Helpers
 # =========================================================
 def predict_probs(image: Image.Image, model, model_name: str):
     x = preprocess_image(image, model_name)
@@ -205,24 +204,65 @@ def pretty_label(label: str) -> str:
     return label.replace("___", " / ").replace("_", " ")
 
 # =========================================================
-# Disease info + tips
+# 7) Disease Info + Cure Tips
 # =========================================================
 def disease_info(label: str):
     low = label.lower()
 
     if "healthy" in low:
-        return {"cause": "No disease detected.", "severity": "None", "spread": "None", "note": "The leaf appears healthy."}
+        return {
+            "cause": "No disease detected.",
+            "severity": "None",
+            "spread": "None",
+            "note": "The leaf appears healthy."
+        }
+
     if "late_blight" in low or "late blight" in low:
-        return {"cause": "Usually linked to fungal-like pathogen infection in wet conditions.", "severity": "High", "spread": "Fast in humid conditions", "note": "Can spread quickly and damage nearby plants."}
+        return {
+            "cause": "Usually linked to fungal-like pathogen infection in wet conditions.",
+            "severity": "High",
+            "spread": "Fast in humid conditions",
+            "note": "Can spread quickly and damage nearby plants."
+        }
+
     if "early_blight" in low or "early blight" in low:
-        return {"cause": "Usually fungal infection, often seen on older leaves first.", "severity": "Medium to High", "spread": "Moderate", "note": "Common in warm and humid environments."}
+        return {
+            "cause": "Usually fungal infection, often seen on older leaves first.",
+            "severity": "Medium to High",
+            "spread": "Moderate",
+            "note": "Common in warm and humid environments."
+        }
+
     if "powdery_mildew" in low or "powdery mildew" in low:
-        return {"cause": "Fungal disease that appears like white powder on leaves.", "severity": "Medium", "spread": "Moderate", "note": "Can reduce plant growth if ignored."}
+        return {
+            "cause": "Fungal disease that appears like white powder on leaves.",
+            "severity": "Medium",
+            "spread": "Moderate",
+            "note": "Can reduce plant growth if ignored."
+        }
+
     if "rust" in low:
-        return {"cause": "Fungal infection causing rust-colored spots.", "severity": "Medium", "spread": "Moderate", "note": "Often spreads through moisture and wind."}
+        return {
+            "cause": "Fungal infection causing rust-colored spots.",
+            "severity": "Medium",
+            "spread": "Moderate",
+            "note": "Often spreads through moisture and wind."
+        }
+
     if "mosaic" in low or "virus" in low:
-        return {"cause": "Likely viral infection.", "severity": "High", "spread": "Can spread through insects/tools", "note": "Isolation is important to reduce spread."}
-    return {"cause": "Disease detected, but exact biological cause may vary.", "severity": "Unknown", "spread": "Possible", "note": "Use a clearer image or consult local experts for exact confirmation."}
+        return {
+            "cause": "Likely viral infection.",
+            "severity": "High",
+            "spread": "Can spread through insects/tools",
+            "note": "Isolation is important to reduce spread."
+        }
+
+    return {
+        "cause": "Disease detected, but exact biological cause may vary.",
+        "severity": "Unknown",
+        "spread": "Possible",
+        "note": "Use a clearer image or consult local experts for exact confirmation."
+    }
 
 def cure_tips(label: str):
     low = label.lower()
@@ -233,6 +273,7 @@ def cure_tips(label: str):
             "Keep regular watering and balanced fertilizer.",
             "Remove old leaves and keep the area clean."
         ]
+
     if "late_blight" in low or "late blight" in low:
         return [
             "Remove infected leaves quickly (do not compost).",
@@ -240,6 +281,7 @@ def cure_tips(label: str):
             "Improve airflow with proper spacing/pruning.",
             "Follow local agriculture guidance for fungicide use."
         ]
+
     if "early_blight" in low or "early blight" in low:
         return [
             "Remove infected leaves and fallen debris.",
@@ -247,6 +289,7 @@ def cure_tips(label: str):
             "Rotate crops to reduce recurrence.",
             "Consult local agriculture guidance if it spreads."
         ]
+
     if "powdery_mildew" in low or "powdery mildew" in low:
         return [
             "Remove heavily infected leaves.",
@@ -254,6 +297,7 @@ def cure_tips(label: str):
             "Improve ventilation and spacing.",
             "Use recommended treatment as per local guidance."
         ]
+
     if "rust" in low:
         return [
             "Remove infected leaves and nearby weeds.",
@@ -261,6 +305,7 @@ def cure_tips(label: str):
             "Improve airflow and sunlight exposure.",
             "Consult local guidance if it increases."
         ]
+
     if "mosaic" in low or "virus" in low:
         return [
             "Isolate or remove infected plants to prevent spread.",
@@ -268,6 +313,7 @@ def cure_tips(label: str):
             "Control insects like aphids/whiteflies safely.",
             "Use healthy seedlings/resistant varieties if available."
         ]
+
     return [
         "Take a clearer photo with good light and close focus.",
         "Remove infected leaves and keep the area clean.",
@@ -276,11 +322,12 @@ def cure_tips(label: str):
     ]
 
 # =========================================================
-# Grad-CAM
+# 8) Grad-CAM
 # =========================================================
 def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None):
     model.eval()
     target_layer = model.layer4[-1]
+
     activations = []
     gradients = []
 
@@ -296,6 +343,7 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
     try:
         x = preprocess_image(image, model_name)
         x.requires_grad_(True)
+
         output = model(x)
 
         if class_idx is None:
@@ -307,9 +355,11 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
 
         acts = activations[0]
         grads = gradients[0]
+
         weights = grads.mean(dim=(2, 3), keepdim=True)
         cam = (weights * acts).sum(dim=1, keepdim=True)
-        cam = torch.relu(cam).squeeze().cpu().numpy()
+        cam = torch.relu(cam)
+        cam = cam.squeeze().cpu().numpy()
 
         if cam.max() > 0:
             cam = cam / cam.max()
@@ -330,36 +380,41 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         heatmap_rgb[..., 0] = (cam_np * 255).astype(np.uint8)
 
         return Image.fromarray(heatmap_rgb), Image.fromarray(overlay)
+
     finally:
         fh.remove()
         bh.remove()
 
+# =========================================================
+# 9) Download Report
+# =========================================================
 def create_text_report(prediction, confidence, preds, info, tips):
-    lines = [
-        "Plant Disease Prediction Report",
-        "=" * 35,
-        f"Prediction: {prediction}",
-        f"Confidence: {confidence:.2f}%",
-        "",
-        "Disease Info",
-        "-" * 20,
-        f"Cause: {info['cause']}",
-        f"Severity: {info['severity']}",
-        f"Spread Risk: {info['spread']}",
-        f"Note: {info['note']}",
-        "",
-        "Top Predictions",
-        "-" * 20,
-    ]
+    lines = []
+    lines.append("Plant Disease Prediction Report")
+    lines.append("=" * 35)
+    lines.append(f"Prediction: {prediction}")
+    lines.append(f"Confidence: {confidence:.2f}%")
+    lines.append("")
+    lines.append("Disease Info")
+    lines.append("-" * 20)
+    lines.append(f"Cause: {info['cause']}")
+    lines.append(f"Severity: {info['severity']}")
+    lines.append(f"Spread Risk: {info['spread']}")
+    lines.append(f"Note: {info['note']}")
+    lines.append("")
+    lines.append("Top Predictions")
+    lines.append("-" * 20)
     for label, p in preds:
         lines.append(f"{pretty_label(label)}: {p * 100:.2f}%")
-    lines.extend(["", "Recommended Care Tips", "-" * 20])
+    lines.append("")
+    lines.append("Recommended Care Tips")
+    lines.append("-" * 20)
     for tip in tips:
         lines.append(f"- {tip}")
     return "\n".join(lines)
 
 # =========================================================
-# UI
+# 10) UI
 # =========================================================
 st.title("🌿 Plant Disease Predictor")
 st.write("Upload a leaf image to get a disease diagnosis, confidence score, Grad-CAM explanation, and simple care tips.")
@@ -411,6 +466,11 @@ if st.button("Predict"):
         st.info("Moderate confidence prediction. The result looks reasonable, but a clearer image may improve reliability.")
     else:
         st.success("High confidence prediction.")
+
+    st.markdown(
+        '<div class="small">Note: For exact pesticide or dosage, always follow local agriculture recommendations.</div>',
+        unsafe_allow_html=True
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -428,14 +488,17 @@ if st.button("Predict"):
             model_name=model_choice,
             class_idx=classes.index(top_label)
         )
+
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("🔥 Grad-CAM Explanation")
+        st.write("This highlights the image regions the model focused on for its prediction.")
         col1, col2 = st.columns(2)
         with col1:
             st.image(heatmap_img, caption="Grad-CAM Heatmap", use_container_width=True)
         with col2:
             st.image(overlay_img, caption="Heatmap Overlay on Leaf", use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
+
     except Exception as e:
         st.warning(f"Grad-CAM could not be generated: {e}")
 
@@ -453,6 +516,11 @@ if st.button("Predict"):
     st.subheader("📊 Confidence Chart")
     st.bar_chart(df)
 
+    with st.expander("Show Top Predictions"):
+        for label, p in preds:
+            st.write(f"**{pretty_label(label)}** — {p * 100:.2f}%")
+            st.progress(int(p * 100))
+
     report_text = create_text_report(
         prediction=nice_label,
         confidence=top_prob * 100,
@@ -460,9 +528,15 @@ if st.button("Predict"):
         info=info,
         tips=tips
     )
+
     st.download_button(
         label="📥 Download Prediction Report",
         data=report_text,
         file_name="plant_disease_report.txt",
         mime="text/plain"
+    )
+else:
+    st.markdown(
+        '<div class="card"><span class="small">Click <b>Predict</b> to see the result.</span></div>',
+        unsafe_allow_html=True
     )
