@@ -16,7 +16,6 @@ DEVICE = torch.device("cpu")
 CONFIDENCE_LOW = 0.60
 CONFIDENCE_MEDIUM = 0.80
 
-# Avoid HF cache symlink warning noise on some environments
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # =========================================================
@@ -119,7 +118,7 @@ section[data-testid="stFileUploaderDropzone"] button{
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 3) Hugging Face Model Config
+# 3) Hugging Face Config
 # =========================================================
 HF_REPO_ID = "jjghb/plant-disease-resnet18"
 
@@ -133,12 +132,15 @@ def get_available_models():
     available = {}
     errors = {}
 
+    hf_token = st.secrets.get("HF_TOKEN", None)
+
     for model_name, hf_filename in MODEL_FILES.items():
         try:
             local_path = hf_hub_download(
                 repo_id=HF_REPO_ID,
                 filename=hf_filename,
-                repo_type="model"
+                repo_type="model",
+                token=hf_token,
             )
             available[model_name] = local_path
         except Exception as e:
@@ -151,8 +153,10 @@ def get_available_models():
 # =========================================================
 def get_transform(model_name: str):
     steps = [transforms.Resize((224, 224))]
+
     if "Grayscale" in model_name:
         steps.append(transforms.Grayscale(num_output_channels=3))
+
     steps += [
         transforms.ToTensor(),
         transforms.Normalize(
@@ -176,6 +180,7 @@ def build_model(num_classes: int):
 @st.cache_resource(show_spinner=False)
 def load_checkpoint(path: str):
     checkpoint = torch.load(path, map_location=DEVICE)
+
     classes = checkpoint["classes"]
     state_dict = checkpoint["state_dict"]
 
@@ -183,6 +188,7 @@ def load_checkpoint(path: str):
     model.load_state_dict(state_dict)
     model.to(DEVICE)
     model.eval()
+
     return model, classes
 
 # =========================================================
@@ -204,7 +210,7 @@ def pretty_label(label: str) -> str:
     return label.replace("___", " / ").replace("_", " ")
 
 # =========================================================
-# 7) Disease Info + Cure Tips
+# 7) Disease Info
 # =========================================================
 def disease_info(label: str):
     low = label.lower()
@@ -264,6 +270,9 @@ def disease_info(label: str):
         "note": "Use a clearer image or consult local experts for exact confirmation."
     }
 
+# =========================================================
+# 8) Cure Tips
+# =========================================================
 def cure_tips(label: str):
     low = label.lower()
 
@@ -278,7 +287,7 @@ def cure_tips(label: str):
         return [
             "Remove infected leaves quickly (do not compost).",
             "Avoid watering on leaves; water near soil.",
-            "Improve airflow with proper spacing/pruning.",
+            "Improve airflow with proper spacing or pruning.",
             "Follow local agriculture guidance for fungicide use."
         ]
 
@@ -310,8 +319,8 @@ def cure_tips(label: str):
         return [
             "Isolate or remove infected plants to prevent spread.",
             "Disinfect tools after use.",
-            "Control insects like aphids/whiteflies safely.",
-            "Use healthy seedlings/resistant varieties if available."
+            "Control insects like aphids or whiteflies safely.",
+            "Use healthy seedlings or resistant varieties if available."
         ]
 
     return [
@@ -322,7 +331,7 @@ def cure_tips(label: str):
     ]
 
 # =========================================================
-# 8) Grad-CAM
+# 9) Grad-CAM
 # =========================================================
 def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None):
     model.eval()
@@ -386,7 +395,7 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         bh.remove()
 
 # =========================================================
-# 9) Download Report
+# 10) Report
 # =========================================================
 def create_text_report(prediction, confidence, preds, info, tips):
     lines = []
@@ -404,17 +413,21 @@ def create_text_report(prediction, confidence, preds, info, tips):
     lines.append("")
     lines.append("Top Predictions")
     lines.append("-" * 20)
+
     for label, p in preds:
         lines.append(f"{pretty_label(label)}: {p * 100:.2f}%")
+
     lines.append("")
     lines.append("Recommended Care Tips")
     lines.append("-" * 20)
+
     for tip in tips:
         lines.append(f"- {tip}")
+
     return "\n".join(lines)
 
 # =========================================================
-# 10) UI
+# 11) UI
 # =========================================================
 st.title("🌿 Plant Disease Predictor")
 st.write("Upload a leaf image to get a disease diagnosis, confidence score, Grad-CAM explanation, and simple care tips.")
@@ -425,6 +438,7 @@ if not available:
     st.error("No models could be loaded from Hugging Face.")
     st.write("Debug details:")
     st.json(errors)
+    st.info("If your Hugging Face repo is private, add HF_TOKEN in Streamlit secrets.")
     st.stop()
 
 st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -439,7 +453,10 @@ model_choice = st.selectbox("Choose a model", list(available.keys()), index=0)
 uploaded = st.file_uploader("Upload leaf image (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
 if not uploaded:
-    st.markdown('<div class="card"><span class="small">⬆️ Upload an image to start.</span></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="card"><span class="small">⬆️ Upload an image to start.</span></div>',
+        unsafe_allow_html=True
+    )
     st.stop()
 
 image = Image.open(uploaded).convert("RGB")
@@ -482,21 +499,24 @@ if st.button("Predict"):
     st.markdown('</div>', unsafe_allow_html=True)
 
     try:
+        class_index = classes.index(top_label)
         heatmap_img, overlay_img = generate_gradcam(
             image=image,
             model=model,
             model_name=model_choice,
-            class_idx=classes.index(top_label)
+            class_idx=class_index
         )
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("🔥 Grad-CAM Explanation")
         st.write("This highlights the image regions the model focused on for its prediction.")
+
         col1, col2 = st.columns(2)
         with col1:
             st.image(heatmap_img, caption="Grad-CAM Heatmap", use_container_width=True)
         with col2:
             st.image(overlay_img, caption="Heatmap Overlay on Leaf", use_container_width=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     except Exception as e:
