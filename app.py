@@ -1,5 +1,4 @@
 import os
-import io
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -7,40 +6,35 @@ import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
+from huggingface_hub import hf_hub_download
 
 # =========================================================
 # 1) App Config
 # =========================================================
 st.set_page_config(page_title="Plant Disease Predictor", layout="centered")
 DEVICE = torch.device("cpu")
+CONFIDENCE_LOW = 0.60
+CONFIDENCE_MEDIUM = 0.80
 
 # =========================================================
 # 2) CSS
 # =========================================================
 st.markdown("""
 <style>
-
-/* ---------- APP BACKGROUND ---------- */
 .stApp{
   background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 45%, #ecfeff 100%) !important;
 }
-
-/* ---------- TEXT READABILITY ---------- */
 html, body, [class*="css"]{
   color: #111827 !important;
 }
 h1,h2,h3,h4,h5,h6,p,span,label,li,div{
   color: #111827 !important;
 }
-
-/* ---------- LAYOUT ---------- */
 main .block-container{
   max-width: 950px;
   padding-top: 1.2rem;
   padding-bottom: 2rem;
 }
-
-/* ---------- CARDS ---------- */
 .card{
   background: rgba(255,255,255,0.96) !important;
   border: 1px solid #e5e7eb !important;
@@ -53,8 +47,6 @@ main .block-container{
   color: #4b5563 !important;
   font-size: 0.92rem !important;
 }
-
-/* ---------- BUTTON ---------- */
 .stButton > button{
   background-color: #111827 !important;
   color: #ffffff !important;
@@ -71,8 +63,6 @@ main .block-container{
   background-color: #1f2937 !important;
   border-color: #1f2937 !important;
 }
-
-/* ---------- SELECTBOX ---------- */
 div[data-testid="stSelectbox"] div[data-baseweb="select"]{
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
@@ -91,8 +81,6 @@ div[data-baseweb="select"] input{
 div[data-baseweb="select"] svg{
   fill: #111827 !important;
 }
-
-/* ---------- DROPDOWN LIST ---------- */
 ul[role="listbox"]{
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
@@ -105,8 +93,6 @@ li[role="option"]{
 li[role="option"]:hover{
   background: #f3f4f6 !important;
 }
-
-/* ---------- FILE UPLOADER ---------- */
 div[data-testid="stFileUploader"]{
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
@@ -126,39 +112,54 @@ section[data-testid="stFileUploaderDropzone"] button{
   color: #ffffff !important;
   border-radius: 10px !important;
 }
-
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 3) Model paths
-# Put your .pth files inside ./models/
+# 3) Hugging Face Model Config
 # =========================================================
-MODEL_PATHS = {
-    "Best (Color model)": "models/color_optuna_resnet18.pth",
-    "Grayscale model": "models/grayscale_optuna_resnet18.pth",
-    "Segmented model": "models/segmented_optuna_resnet18.pth",
+HF_REPO_ID = "jjghb/plant-disease-resnet18"
+
+MODEL_FILES = {
+    "Best (Color model)": "color_optuna_resnet18.pth",
+    "Grayscale model": "grayscale_optuna_resnet18.pth",
 }
 
+@st.cache_resource
 def get_available_models():
-    return {k: v for k, v in MODEL_PATHS.items() if os.path.exists(v)}
+    available = {}
+    for model_name, hf_filename in MODEL_FILES.items():
+        try:
+            local_path = hf_hub_download(
+                repo_id=HF_REPO_ID,
+                filename=hf_filename
+            )
+            available[model_name] = local_path
+        except Exception:
+            pass
+    return available
 
 # =========================================================
 # 4) Preprocessing
 # =========================================================
 def get_transform(model_name: str):
-    t = [transforms.Resize((224, 224))]
+    steps = [transforms.Resize((224, 224))]
     if "Grayscale" in model_name:
-        t.append(transforms.Grayscale(num_output_channels=3))
-    t += [
+        steps.append(transforms.Grayscale(num_output_channels=3))
+    steps += [
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406],
-                             [0.229, 0.224, 0.225])
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
     ]
-    return transforms.Compose(t)
+    return transforms.Compose(steps)
+
+def preprocess_image(image: Image.Image, model_name: str):
+    return get_transform(model_name)(image).unsqueeze(0).to(DEVICE)
 
 # =========================================================
-# 5) Build / Load model
+# 5) Build / Load Model
 # =========================================================
 def build_model(num_classes: int):
     model = models.resnet18(weights=None)
@@ -167,23 +168,20 @@ def build_model(num_classes: int):
 
 @st.cache_resource
 def load_checkpoint(path: str):
-    ckpt = torch.load(path, map_location=DEVICE)
-    classes = ckpt["classes"]
-    state_dict = ckpt["state_dict"]
+    checkpoint = torch.load(path, map_location=DEVICE)
+    classes = checkpoint["classes"]
+    state_dict = checkpoint["state_dict"]
 
     model = build_model(len(classes))
     model.load_state_dict(state_dict)
     model.to(DEVICE)
     model.eval()
+
     return model, classes
 
 # =========================================================
-# 6) Prediction helpers
+# 6) Prediction Helpers
 # =========================================================
-def preprocess_image(image: Image.Image, model_name: str):
-    x = get_transform(model_name)(image).unsqueeze(0).to(DEVICE)
-    return x
-
 def predict_probs(image: Image.Image, model, model_name: str):
     x = preprocess_image(image, model_name)
     with torch.no_grad():
@@ -200,7 +198,7 @@ def pretty_label(label: str) -> str:
     return label.replace("___", " / ").replace("_", " ")
 
 # =========================================================
-# 7) Disease info + cure tips
+# 7) Disease Info + Cure Tips
 # =========================================================
 def disease_info(label: str):
     low = label.lower()
@@ -321,14 +319,7 @@ def cure_tips(label: str):
 # 8) Grad-CAM
 # =========================================================
 def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None):
-    """
-    Returns:
-        heatmap_rgb_pil: PIL Image heatmap
-        overlay_pil: PIL Image overlay on original resized image
-    """
     model.eval()
-
-    # Target layer for ResNet18
     target_layer = model.layer4[-1]
 
     activations = []
@@ -341,7 +332,6 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         gradients.append(grad_output[0].detach())
 
     fh = target_layer.register_forward_hook(forward_hook)
-    # full backward hook is preferred
     bh = target_layer.register_full_backward_hook(backward_hook)
 
     try:
@@ -357,13 +347,12 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         model.zero_grad()
         score.backward()
 
-        acts = activations[0]      # shape: [1, C, H, W]
-        grads = gradients[0]       # shape: [1, C, H, W]
+        acts = activations[0]
+        grads = gradients[0]
 
-        weights = grads.mean(dim=(2, 3), keepdim=True)  # [1, C, 1, 1]
-        cam = (weights * acts).sum(dim=1, keepdim=True) # [1, 1, H, W]
+        weights = grads.mean(dim=(2, 3), keepdim=True)
+        cam = (weights * acts).sum(dim=1, keepdim=True)
         cam = torch.relu(cam)
-
         cam = cam.squeeze().cpu().numpy()
 
         if cam.max() > 0:
@@ -372,32 +361,26 @@ def generate_gradcam(image: Image.Image, model, model_name: str, class_idx=None)
         cam = Image.fromarray(np.uint8(cam * 255)).resize((224, 224))
         cam_np = np.array(cam).astype(np.float32) / 255.0
 
-        # Original resized image
         orig = image.resize((224, 224)).convert("RGB")
         orig_np = np.array(orig).astype(np.float32)
 
-        # Create simple red heatmap
         heatmap = np.zeros((224, 224, 3), dtype=np.float32)
-        heatmap[..., 0] = cam_np * 255.0  # red channel
+        heatmap[..., 0] = cam_np * 255.0
 
-        # Overlay
         overlay = 0.6 * orig_np + 0.4 * heatmap
         overlay = np.clip(overlay, 0, 255).astype(np.uint8)
 
         heatmap_rgb = np.zeros((224, 224, 3), dtype=np.uint8)
         heatmap_rgb[..., 0] = (cam_np * 255).astype(np.uint8)
 
-        heatmap_rgb_pil = Image.fromarray(heatmap_rgb)
-        overlay_pil = Image.fromarray(overlay)
-
-        return heatmap_rgb_pil, overlay_pil
+        return Image.fromarray(heatmap_rgb), Image.fromarray(overlay)
 
     finally:
         fh.remove()
         bh.remove()
 
 # =========================================================
-# 9) Download report
+# 9) Download Report
 # =========================================================
 def create_text_report(prediction, confidence, preds, info, tips):
     lines = []
@@ -420,9 +403,8 @@ def create_text_report(prediction, confidence, preds, info, tips):
     lines.append("")
     lines.append("Recommended Care Tips")
     lines.append("-" * 20)
-    for t in tips:
-        lines.append(f"- {t}")
-
+    for tip in tips:
+        lines.append(f"- {tip}")
     return "\n".join(lines)
 
 # =========================================================
@@ -432,9 +414,10 @@ st.title("🌿 Plant Disease Predictor")
 st.write("Upload a leaf image to get a disease diagnosis, confidence score, Grad-CAM explanation, and simple care tips.")
 
 available = get_available_models()
+
 if not available:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.error("No model files found in the `models/` folder. Please add your trained `.pth` files.")
+    st.error("No models could be loaded from Hugging Face. Check your repo name, file names, or internet connection.")
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
@@ -463,27 +446,27 @@ if st.button("Predict"):
 
     top_label, top_prob = preds[0]
     nice_label = pretty_label(top_label)
-
     info = disease_info(top_label)
     tips = cure_tips(top_label)
 
-    # ---------------- Result ----------------
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("✅ Result")
     st.write(f"**Prediction:** {nice_label}")
     st.write(f"**Confidence:** {top_prob * 100:.2f}%")
 
-    if top_prob < 0.60:
+    if top_prob < CONFIDENCE_LOW:
         st.warning("Low confidence prediction. Please upload a clearer image with better lighting and focus.")
-    elif top_prob < 0.80:
+    elif top_prob < CONFIDENCE_MEDIUM:
         st.info("Moderate confidence prediction. The result looks reasonable, but a clearer image may improve reliability.")
     else:
         st.success("High confidence prediction.")
 
-    st.markdown('<div class="small">Note: For exact pesticide or dosage, always follow local agriculture recommendations.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="small">Note: For exact pesticide or dosage, always follow local agriculture recommendations.</div>',
+        unsafe_allow_html=True
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---------------- Disease info ----------------
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("🦠 Disease Information")
     st.write(f"**Possible Cause:** {info['cause']}")
@@ -492,7 +475,6 @@ if st.button("Predict"):
     st.write(f"**Note:** {info['note']}")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---------------- Grad-CAM ----------------
     try:
         heatmap_img, overlay_img = generate_gradcam(
             image=image,
@@ -516,14 +498,12 @@ if st.button("Predict"):
         st.warning(f"Grad-CAM could not be generated for this prediction. Error: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---------------- Tips ----------------
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("🌱 What you can do")
-    for t in tips:
-        st.write(f"- {t}")
+    for tip in tips:
+        st.write(f"- {tip}")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---------------- Chart ----------------
     df = pd.DataFrame({
         "Class": [pretty_label(x[0]) for x in preds],
         "Probability": [x[1] for x in preds]
@@ -537,7 +517,6 @@ if st.button("Predict"):
             st.write(f"**{pretty_label(label)}** — {p * 100:.2f}%")
             st.progress(int(p * 100))
 
-    # ---------------- Download report ----------------
     report_text = create_text_report(
         prediction=nice_label,
         confidence=top_prob * 100,
@@ -552,6 +531,8 @@ if st.button("Predict"):
         file_name="plant_disease_report.txt",
         mime="text/plain"
     )
-
 else:
-    st.markdown('<div class="card"><span class="small">Click <b>Predict</b> to see the result.</span></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="card"><span class="small">Click <b>Predict</b> to see the result.</span></div>',
+        unsafe_allow_html=True
+    )
